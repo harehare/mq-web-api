@@ -70,7 +70,9 @@ pub mod cleanup;
 pub mod config;
 /// HTTP request handlers.
 pub mod handlers;
-/// Authentication and rate limiting middleware.
+/// Request counters and latency histograms exposed at `/metrics`.
+pub mod metrics;
+/// Authentication, rate limiting and error-shaping middleware.
 pub mod middleware;
 /// RFC 9457 problem details responses.
 pub mod problem;

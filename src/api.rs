@@ -128,6 +128,12 @@ pub enum InputFormat {
 }
 
 impl InputFormat {
+    /// Every accepted spelling, for error messages.
+    pub const NAMES: &'static [&'static str] = &[
+        "markdown", "mdx", "text", "html", "raw", "null", "csv", "tsv", "psv", "json", "yaml",
+        "toml", "xml", "toon",
+    ];
+
     /// Returns the mq query prefix that parses raw text of this format into
     /// structured data, for module-backed formats. `None` for formats that
     /// are ingested natively (markdown, html, ...) without an `import`.
@@ -161,6 +167,11 @@ pub enum OutputFormat {
     Json,
     /// Suppress output.
     None,
+}
+
+impl OutputFormat {
+    /// Every accepted spelling, for error messages.
+    pub const NAMES: &'static [&'static str] = &["markdown", "html", "text", "json", "none"];
 }
 
 /// Request body for `POST /api/check`.
@@ -334,9 +345,14 @@ pub fn query(
 
 /// Runs `request.query` against every document in `request.inputs` in
 /// parallel, each with its own engine instance.
+///
+/// Each document gets at most `timeout`, and all of them together at most
+/// `batch_timeout`: documents not started by then fail with an error instead of
+/// keeping the worker busy. A document whose evaluation panics fails alone.
 pub fn batch_query(
     request: BatchApiRequest,
     timeout: std::time::Duration,
+    batch_timeout: std::time::Duration,
 ) -> miette::Result<BatchApiResponse> {
     if request.inputs.len() > MAX_BATCH_SIZE {
         return Err(miette!(
@@ -346,10 +362,23 @@ pub fn batch_query(
         ));
     }
 
+    let deadline = std::time::Instant::now() + batch_timeout;
+
     let items = request
         .inputs
         .par_iter()
         .map(|input| {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return BatchItemResult {
+                    results: vec![],
+                    error: Some(
+                        "Batch time budget exhausted before this document was processed"
+                            .to_string(),
+                    ),
+                };
+            }
+
             let item_request = ApiRequest {
                 query: request.query.clone(),
                 input: Some(input.clone()),
@@ -359,14 +388,21 @@ pub fn batch_query(
                 output_format: request.output_format.clone(),
                 aggregate: request.aggregate,
             };
-            match execute_query(item_request, timeout) {
-                Ok(response) => BatchItemResult {
+            let item_timeout = timeout.min(remaining);
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                execute_query(item_request, item_timeout)
+            })) {
+                Ok(Ok(response)) => BatchItemResult {
                     results: response.results,
                     error: None,
                 },
-                Err(e) => BatchItemResult {
+                Ok(Err(e)) => BatchItemResult {
                     results: vec![],
                     error: Some(e.to_string()),
+                },
+                Err(_) => BatchItemResult {
+                    results: vec![],
+                    error: Some("Internal error while evaluating the query".to_string()),
                 },
             }
         })
@@ -1078,7 +1114,11 @@ mod tests {
             output_format: None,
             aggregate: None,
         };
-        let result = batch_query(req, std::time::Duration::from_secs(10));
+        let result = batch_query(
+            req,
+            std::time::Duration::from_secs(10),
+            std::time::Duration::from_secs(30),
+        );
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert_eq!(resp.items.len(), 2);
@@ -1098,12 +1138,56 @@ mod tests {
             output_format: None,
             aggregate: None,
         };
-        let result = batch_query(req, std::time::Duration::from_secs(10));
+        let result = batch_query(
+            req,
+            std::time::Duration::from_secs(10),
+            std::time::Duration::from_secs(30),
+        );
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert_eq!(resp.items.len(), 1);
         assert!(resp.items[0].error.is_some());
         assert!(resp.items[0].results.is_empty());
+    }
+
+    #[test]
+    fn test_batch_query_stops_when_time_budget_is_exhausted() {
+        let req = BatchApiRequest {
+            query: ".h1".to_string(),
+            inputs: vec!["# Title".to_string(); 3],
+            input_format: Some(InputFormat::Markdown),
+            modules: None,
+            args: None,
+            output_format: None,
+            aggregate: None,
+        };
+        let resp = batch_query(
+            req,
+            std::time::Duration::from_secs(10),
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        assert_eq!(resp.items.len(), 3);
+        for item in &resp.items {
+            assert!(item.results.is_empty());
+            assert!(item.error.as_deref().unwrap().contains("time budget"));
+        }
+    }
+
+    #[test]
+    fn test_format_names_are_all_accepted_by_serde() {
+        for name in InputFormat::NAMES {
+            assert!(
+                serde_json::from_str::<InputFormat>(&format!("\"{name}\"")).is_ok(),
+                "{name}"
+            );
+        }
+        for name in OutputFormat::NAMES {
+            assert!(
+                serde_json::from_str::<OutputFormat>(&format!("\"{name}\"")).is_ok(),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -1117,7 +1201,11 @@ mod tests {
             output_format: None,
             aggregate: None,
         };
-        let result = batch_query(req, std::time::Duration::from_secs(10));
+        let result = batch_query(
+            req,
+            std::time::Duration::from_secs(10),
+            std::time::Duration::from_secs(30),
+        );
         assert!(result.is_ok());
         assert!(result.unwrap().items.is_empty());
     }
@@ -1133,7 +1221,11 @@ mod tests {
             output_format: None,
             aggregate: None,
         };
-        let result = batch_query(req, std::time::Duration::from_secs(10));
+        let result = batch_query(
+            req,
+            std::time::Duration::from_secs(10),
+            std::time::Duration::from_secs(30),
+        );
         assert!(result.is_err());
     }
 

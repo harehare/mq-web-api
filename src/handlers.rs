@@ -1,14 +1,16 @@
 use axum::{
     extract::rejection::QueryRejection,
     extract::{FromRequestParts, Path, Query, State},
-    http::{StatusCode, request::Parts},
-    response::Json,
+    http::{StatusCode, header::CONTENT_TYPE, request::Parts},
+    response::{IntoResponse, Json},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned, de::IntoDeserializer};
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::time::Duration;
-use tracing::{debug, error, info};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tracing::{debug, error};
 use utoipa::{
     Modify, OpenApi, ToSchema,
     openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
@@ -21,47 +23,136 @@ use crate::{
         FunctionsApiResponse, InputFormat, LintApiRequest, LintApiResponse, LintDiagnostic,
         OutputFormat, QueryApiResponse, SelectorDoc, SelectorsApiResponse,
     },
+    metrics::metrics,
     problem::ProblemDetails,
     query_cache::{self, QueryCache},
 };
+
+/// Set once a shutdown signal arrived; makes `GET /ready` answer 503.
+pub static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// State shared by all handlers.
 #[derive(Clone)]
 pub struct AppState {
     /// Maximum duration a single query evaluation may run before it's aborted.
     pub query_timeout: Duration,
+    /// Wall-clock budget of one batch request.
+    pub batch_timeout: Duration,
     /// Short-lived cache of `execute_query` results.
     pub query_cache: Arc<QueryCache>,
+    /// One permit per query that may be evaluated at the same time.
+    pub query_slots: Arc<Semaphore>,
 }
 
-/// Returns a cached response for `request` if one is fresh, otherwise runs
-/// `crate::api::query` on the blocking pool and caches a successful result.
+/// Waits up to `query_timeout` for a free evaluation slot. The permit is meant
+/// to be moved into the blocking task, so a slot stays taken for as long as the
+/// work really runs, even after the HTTP request that started it timed out.
+async fn acquire_query_slot(state: &AppState) -> Result<OwnedSemaphorePermit, ProblemDetails> {
+    match tokio::time::timeout(
+        state.query_timeout,
+        Arc::clone(&state.query_slots).acquire_owned(),
+    )
+    .await
+    {
+        Ok(Ok(permit)) => Ok(permit),
+        _ => {
+            metrics().record_query_rejected();
+            Err(ProblemDetails::new(StatusCode::SERVICE_UNAVAILABLE)
+                .with_title("Server busy")
+                .with_detail(
+                    "error",
+                    "Too many queries are being evaluated, retry shortly",
+                )
+                .with_retry_after(1))
+        }
+    }
+}
+
+/// Maps a failed blocking task (a panic or cancellation) to a 500 without
+/// leaking its message to the caller.
+fn task_failed(context: &str, e: tokio::task::JoinError) -> ProblemDetails {
+    error!("{} task failed: {}", context, e);
+    ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
+        .with_title("Internal error")
+        .with_detail(
+            "error",
+            "The request could not be completed because of an internal error",
+        )
+}
+
+/// Parses an optional `?input_format=` / `?output_format=` value. An empty
+/// value counts as absent; an unknown one is a 400 listing the valid names.
+fn parse_format<T: DeserializeOwned>(
+    param: &str,
+    value: Option<String>,
+    expected: &[&str],
+) -> Result<Option<T>, ProblemDetails> {
+    let Some(value) = value.filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+
+    T::deserialize(value.as_str().into_deserializer())
+        .map(Some)
+        .map_err(|_: serde::de::value::Error| {
+            ProblemDetails::new(StatusCode::BAD_REQUEST)
+                .with_title("Invalid query parameters")
+                .with_detail(
+                    "error",
+                    &format!(
+                        "Invalid {} '{}', expected one of: {}",
+                        param,
+                        value,
+                        expected.join(", ")
+                    ),
+                )
+        })
+}
+
+/// Serves `request` from the cache when fresh, otherwise evaluates it on the
+/// blocking pool and caches a successful result.
 ///
-/// Mirrors the `Result<miette::Result<QueryApiResponse>, JoinError>` shape of
-/// a bare `spawn_blocking(...).await` so call sites keep handling the panic
-/// case (`JoinError`, -> 500) and the query-error case (`Err`, -> 400)
-/// exactly as they did before caching was introduced.
-async fn execute_query_with_cache(
+/// Maps every failure to the response the caller should send: an invalid query
+/// is a 400, a saturated server a 503, a panicking evaluation a 500.
+async fn run_query(
     state: &AppState,
     request: ApiRequest,
-) -> Result<miette::Result<QueryApiResponse>, tokio::task::JoinError> {
+) -> Result<QueryApiResponse, ProblemDetails> {
     let cache_key = query_cache::cache_key(&request);
 
-    if let Some(key) = &cache_key
-        && let Some(cached) = state.query_cache.get(key).await
-    {
-        debug!("Query cache hit");
-        return Ok(Ok(cached));
+    if let Some(key) = &cache_key {
+        if let Some(cached) = state.query_cache.get(key).await {
+            debug!("Query cache hit");
+            metrics().record_cache_hit();
+            return Ok(cached);
+        }
+        metrics().record_cache_miss();
     }
 
+    let permit = acquire_query_slot(state).await?;
     let timeout = state.query_timeout;
-    let result = tokio::task::spawn_blocking(move || crate::api::query(request, timeout)).await?;
+    let started = Instant::now();
+    let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        crate::api::query(request, timeout)
+    })
+    .await
+    .map_err(|e| task_failed("Query", e))?;
+    metrics().record_query(started.elapsed().as_secs_f64());
 
-    if let (Ok(response), Some(key)) = (&result, cache_key) {
-        state.query_cache.insert(key, response.clone()).await;
+    match result {
+        Ok(response) => {
+            if let Some(key) = cache_key {
+                state.query_cache.insert(key, response.clone()).await;
+            }
+            Ok(response)
+        }
+        Err(e) => {
+            debug!("Query failed: {}", e);
+            Err(ProblemDetails::new(StatusCode::BAD_REQUEST)
+                .with_title("Invalid query")
+                .with_detail("error", &e.to_string()))
+        }
     }
-
-    Ok(result)
 }
 
 /// Query parameters of `GET /api/v1/query`.
@@ -106,16 +197,46 @@ where
     }
 }
 
-/// Response body of the health endpoint.
+/// Response body of the health and readiness endpoints.
 #[derive(Serialize, ToSchema)]
 pub struct HealthResponse {
-    /// Always `"ok"`.
+    /// `"ok"` for liveness, `"ready"` for readiness.
     pub status: &'static str,
+    /// Version of the running server.
+    pub version: &'static str,
 }
 
-/// Returns 200 OK when the server is healthy.
+/// Returns 200 OK while the process is alive.
 pub async fn health_check() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
+    Json(HealthResponse {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+/// Returns 200 OK while the server accepts traffic, 503 once it's shutting down.
+pub async fn ready_check() -> Result<Json<HealthResponse>, ProblemDetails> {
+    if SHUTTING_DOWN.load(Ordering::Relaxed) {
+        return Err(ProblemDetails::new(StatusCode::SERVICE_UNAVAILABLE)
+            .with_title("Shutting down")
+            .with_detail(
+                "error",
+                "The server is draining and no longer accepts new work",
+            )
+            .with_retry_after(1));
+    }
+    Ok(Json(HealthResponse {
+        status: "ready",
+        version: env!("CARGO_PKG_VERSION"),
+    }))
+}
+
+/// Serves the metrics in the Prometheus text exposition format.
+pub async fn metrics_endpoint() -> impl IntoResponse {
+    (
+        [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        metrics().render(),
+    )
 }
 
 #[derive(OpenApi)]
@@ -198,13 +319,10 @@ pub async fn get_query_api(
 ) -> Result<Json<QueryApiResponse>, ProblemDetails> {
     debug!("GET /query called with query: {}", params.query);
 
-    let input_format = params
-        .input_format
-        .and_then(|v| serde_json::from_str::<InputFormat>(&format!("\"{}\"", v)).ok());
-
+    let input_format =
+        parse_format::<InputFormat>("input_format", params.input_format, InputFormat::NAMES)?;
     debug!("Processing request with input_format: {:?}", input_format);
 
-    let query_str = params.query.clone();
     let request = ApiRequest {
         query: params.query,
         input: params.input,
@@ -215,29 +333,9 @@ pub async fn get_query_api(
         aggregate: None,
     };
 
-    match execute_query_with_cache(&state, request)
-        .await
-        .map_err(|e| {
-            error!("Query task panicked: {}", e);
-            ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
-                .with_title("Internal error")
-                .with_detail("error", &e.to_string())
-        })? {
-        Ok(response) => {
-            info!(
-                "Successfully processed query: {}, results count: {}",
-                query_str,
-                response.results.len()
-            );
-            Ok(Json(response))
-        }
-        Err(e) => {
-            error!("Failed to process query '{}': {}", query_str, e);
-            Err(ProblemDetails::new(StatusCode::BAD_REQUEST)
-                .with_title("Invalid query")
-                .with_detail("error", &e.to_string()))
-        }
-    }
+    let response = run_query(&state, request).await?;
+    debug!("Query succeeded with {} results", response.results.len());
+    Ok(Json(response))
 }
 
 #[utoipa::path(
@@ -261,30 +359,9 @@ pub async fn post_query_api(
         request.input_format
     );
 
-    let query_str = request.query.clone();
-    match execute_query_with_cache(&state, request)
-        .await
-        .map_err(|e| {
-            error!("Query task panicked: {}", e);
-            ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
-                .with_title("Internal error")
-                .with_detail("error", &e.to_string())
-        })? {
-        Ok(response) => {
-            info!(
-                "Successfully processed query: {}, results count: {}",
-                query_str,
-                response.results.len()
-            );
-            Ok(Json(response))
-        }
-        Err(e) => {
-            error!("Failed to process query '{}': {}", query_str, e);
-            Err(ProblemDetails::new(StatusCode::BAD_REQUEST)
-                .with_title("Invalid query")
-                .with_detail("error", &e.to_string()))
-        }
-    }
+    let response = run_query(&state, request).await?;
+    debug!("Query succeeded with {} results", response.results.len());
+    Ok(Json(response))
 }
 
 #[utoipa::path(
@@ -308,26 +385,25 @@ pub async fn post_batch_api(
         request.inputs.len()
     );
 
-    let query_str = request.query.clone();
+    let permit = acquire_query_slot(&state).await?;
     let timeout = state.query_timeout;
-    match tokio::task::spawn_blocking(move || crate::api::batch_query(request, timeout))
-        .await
-        .map_err(|e| {
-            error!("Batch task panicked: {}", e);
-            ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
-                .with_title("Internal error")
-                .with_detail("error", &e.to_string())
-        })? {
+    let batch_timeout = state.batch_timeout;
+    let started = Instant::now();
+    let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        crate::api::batch_query(request, timeout, batch_timeout)
+    })
+    .await
+    .map_err(|e| task_failed("Batch", e))?;
+    metrics().record_query(started.elapsed().as_secs_f64());
+
+    match result {
         Ok(response) => {
-            info!(
-                "Successfully processed batch query: {}, documents: {}",
-                query_str,
-                response.items.len()
-            );
+            debug!("Batch succeeded with {} documents", response.items.len());
             Ok(Json(response))
         }
         Err(e) => {
-            error!("Failed to process batch query '{}': {}", query_str, e);
+            debug!("Batch rejected: {}", e);
             Err(ProblemDetails::new(StatusCode::BAD_REQUEST)
                 .with_title("Invalid batch request")
                 .with_detail("error", &e.to_string()))
@@ -390,16 +466,14 @@ pub async fn post_shorthand_query_api(
 ) -> Result<Json<QueryApiResponse>, ProblemDetails> {
     debug!("POST /{{query}} called with query: {}", query);
 
-    let input_format = params
-        .input_format
-        .and_then(|v| serde_json::from_str::<InputFormat>(&format!("\"{}\"", v)).ok())
-        .or_else(|| sniff_input_format(&body));
-    let output_format = params
-        .output_format
-        .and_then(|v| serde_json::from_str::<OutputFormat>(&format!("\"{}\"", v)).ok());
+    let input_format =
+        parse_format::<InputFormat>("input_format", params.input_format, InputFormat::NAMES)?
+            .or_else(|| sniff_input_format(&body));
+    let output_format =
+        parse_format::<OutputFormat>("output_format", params.output_format, OutputFormat::NAMES)?;
 
     let request = ApiRequest {
-        query: query.clone(),
+        query,
         input: Some(body),
         input_format,
         modules: None,
@@ -408,29 +482,12 @@ pub async fn post_shorthand_query_api(
         aggregate: None,
     };
 
-    match execute_query_with_cache(&state, request)
-        .await
-        .map_err(|e| {
-            error!("Shorthand query task panicked: {}", e);
-            ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
-                .with_title("Internal error")
-                .with_detail("error", &e.to_string())
-        })? {
-        Ok(response) => {
-            info!(
-                "Successfully processed shorthand query: {}, results count: {}",
-                query,
-                response.results.len()
-            );
-            Ok(Json(response))
-        }
-        Err(e) => {
-            error!("Failed to process shorthand query '{}': {}", query, e);
-            Err(ProblemDetails::new(StatusCode::BAD_REQUEST)
-                .with_title("Invalid query")
-                .with_detail("error", &e.to_string()))
-        }
-    }
+    let response = run_query(&state, request).await?;
+    debug!(
+        "Shorthand query succeeded with {} results",
+        response.results.len()
+    );
+    Ok(Json(response))
 }
 
 #[utoipa::path(
@@ -438,6 +495,7 @@ pub async fn post_shorthand_query_api(
     path = "/api/v1/check",
     responses(
         (status = 200, description = "Type check completed", body = CheckApiResponse),
+        (status = 500, description = "The type checker failed unexpectedly"),
     ),
     request_body = CheckApiRequest
 )]
@@ -445,23 +503,15 @@ pub async fn post_shorthand_query_api(
 pub async fn post_check_api(
     State(_state): State<AppState>,
     Json(request): Json<CheckApiRequest>,
-) -> Json<CheckApiResponse> {
+) -> Result<Json<CheckApiResponse>, ProblemDetails> {
     debug!("POST /check called with query: {}", request.query);
 
-    let query_str = request.query.clone();
     let response = tokio::task::spawn_blocking(move || crate::api::check(request))
         .await
-        .unwrap_or_else(|e| {
-            error!("Check task panicked: {}", e);
-            crate::api::CheckApiResponse { errors: vec![] }
-        });
-    info!(
-        "Type check for query '{}': {} errors found",
-        query_str,
-        response.errors.len()
-    );
+        .map_err(|e| task_failed("Check", e))?;
+    debug!("Type check found {} errors", response.errors.len());
 
-    Json(response)
+    Ok(Json(response))
 }
 
 #[utoipa::path(
@@ -482,18 +532,11 @@ pub async fn post_format_api(
 
     match tokio::task::spawn_blocking(move || crate::api::format_query(request))
         .await
-        .map_err(|e| {
-            error!("Format task panicked: {}", e);
-            ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
-                .with_title("Internal error")
-                .with_detail("error", &e.to_string())
-        })? {
-        Ok(response) => {
-            info!("Format completed successfully");
-            Ok(Json(response))
-        }
+        .map_err(|e| task_failed("Format", e))?
+    {
+        Ok(response) => Ok(Json(response)),
         Err(e) => {
-            error!("Format failed: {}", e);
+            debug!("Format failed: {}", e);
             Err(ProblemDetails::new(StatusCode::BAD_REQUEST)
                 .with_title("Format error")
                 .with_detail("error", &e.to_string()))
@@ -576,6 +619,7 @@ pub async fn get_selector_api(
     path = "/api/v1/lint",
     responses(
         (status = 200, description = "Lint completed", body = LintApiResponse),
+        (status = 500, description = "The linter failed unexpectedly"),
     ),
     request_body = LintApiRequest
 )]
@@ -583,25 +627,15 @@ pub async fn get_selector_api(
 pub async fn post_lint_api(
     State(_state): State<AppState>,
     Json(request): Json<LintApiRequest>,
-) -> Json<LintApiResponse> {
+) -> Result<Json<LintApiResponse>, ProblemDetails> {
     debug!("POST /lint called with query: {}", request.query);
 
-    let query_str = request.query.clone();
     let response = tokio::task::spawn_blocking(move || crate::api::lint(request))
         .await
-        .unwrap_or_else(|e| {
-            error!("Lint task panicked: {}", e);
-            crate::api::LintApiResponse {
-                diagnostics: vec![],
-            }
-        });
-    info!(
-        "Lint for query '{}': {} diagnostics found",
-        query_str,
-        response.diagnostics.len()
-    );
+        .map_err(|e| task_failed("Lint", e))?;
+    debug!("Lint found {} diagnostics", response.diagnostics.len());
 
-    Json(response)
+    Ok(Json(response))
 }
 
 static OPENAPI_SPEC: OnceLock<utoipa::openapi::OpenApi> = OnceLock::new();

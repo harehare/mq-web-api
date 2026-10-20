@@ -172,6 +172,12 @@ impl RateLimiter {
         self.config.window_size_seconds
     }
 
+    /// Returns the seconds left until the current window ends, at least 1.
+    pub fn retry_after_seconds(&self) -> i64 {
+        let now = current_timestamp();
+        (self.get_window_start(now) + self.config.window_size_seconds - now).max(1)
+    }
+
     /// Inserts a raw entry, bypassing limit checks.
     #[cfg(test)]
     pub async fn insert_entry_for_test(
