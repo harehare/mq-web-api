@@ -1,6 +1,6 @@
 use crate::query_cache::QueryCacheConfig;
 use crate::rate_limiter::RateLimitConfig;
-use std::{env, time::Duration};
+use std::{env, fmt, str::FromStr, time::Duration};
 
 /// Server configuration.
 #[derive(Debug, Clone)]
@@ -36,10 +36,27 @@ pub struct Config {
     /// `query_timeout`, which only bounds query evaluation itself; a request
     /// that exceeds this is aborted with `408 Request Timeout`.
     pub request_timeout: Duration,
+    /// Number of reverse proxies in front of the server that append to
+    /// `X-Forwarded-For`. The client IP is read that many entries from the right
+    /// of the header; `0` ignores forwarding headers and uses the TCP peer.
+    pub trusted_proxy_count: usize,
+    /// Maximum number of queries evaluated at the same time. Further queries
+    /// wait up to `query_timeout` for a slot, then get `503 Service Unavailable`.
+    pub max_concurrent_queries: usize,
+    /// Wall-clock budget of one `POST /api/v1/batch` request. Documents still
+    /// pending when it runs out are reported as failed.
+    pub batch_timeout: Duration,
+    /// Serve `GET /metrics` in the Prometheus text format.
+    pub metrics_enabled: bool,
+    /// Time between a shutdown signal and the listener closing, during which
+    /// `/ready` already answers 503 so load balancers can drain the instance.
+    pub shutdown_drain: Duration,
+    /// Maximum time to wait for in-flight requests after the listener closed.
+    pub shutdown_timeout: Duration,
 }
 
 /// API key authentication settings.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct AuthConfig {
     /// Whether requests must present an API key.
     pub enabled: bool,
@@ -47,6 +64,17 @@ pub struct AuthConfig {
     pub keys: Vec<String>,
     /// Path to a JSON file defining keys with scopes and limits. Takes precedence over `keys`.
     pub keys_file: Option<String>,
+}
+
+// Hand-written so `{:?}` of the config never prints the raw API keys.
+impl fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthConfig")
+            .field("enabled", &self.enabled)
+            .field("keys", &format_args!("[{} redacted]", self.keys.len()))
+            .field("keys_file", &self.keys_file)
+            .finish()
+    }
 }
 
 /// Log output format.
@@ -74,8 +102,35 @@ impl Default for Config {
             auth: AuthConfig::default(),
             max_request_body_size: 10 * 1024 * 1024,
             request_timeout: Duration::from_secs(30),
+            trusted_proxy_count: 1,
+            max_concurrent_queries: std::thread::available_parallelism().map_or(4, |n| n.get() * 2),
+            batch_timeout: Duration::from_secs(20),
+            metrics_enabled: false,
+            shutdown_drain: Duration::ZERO,
+            shutdown_timeout: Duration::from_secs(30),
         }
     }
+}
+
+/// Overwrites `target` with the parsed value of `name`, warning and keeping
+/// the current value when it's set but unparsable.
+fn env_override<T: FromStr + fmt::Debug>(name: &str, target: &mut T) {
+    if let Ok(raw) = env::var(name) {
+        match raw.parse::<T>() {
+            Ok(value) => *target = value,
+            Err(_) => eprintln!(
+                "Warning: Invalid {} value '{}', using default {:?}",
+                name, raw, target
+            ),
+        }
+    }
+}
+
+/// Like [`env_override`], for whole-second [`Duration`]s.
+fn env_override_seconds(name: &str, target: &mut Duration) {
+    let mut seconds = target.as_secs();
+    env_override(name, &mut seconds);
+    *target = Duration::from_secs(seconds);
 }
 
 impl Config {
@@ -281,6 +336,14 @@ impl Config {
             }
         }
 
+        env_override("TRUSTED_PROXY_COUNT", &mut config.trusted_proxy_count);
+        env_override("MAX_CONCURRENT_QUERIES", &mut config.max_concurrent_queries);
+        config.max_concurrent_queries = config.max_concurrent_queries.max(1);
+        env_override_seconds("BATCH_TIMEOUT_SECONDS", &mut config.batch_timeout);
+        env_override("METRICS_ENABLED", &mut config.metrics_enabled);
+        env_override_seconds("SHUTDOWN_DRAIN_SECONDS", &mut config.shutdown_drain);
+        env_override_seconds("SHUTDOWN_TIMEOUT_SECONDS", &mut config.shutdown_timeout);
+
         config
     }
 
@@ -337,6 +400,21 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config_443.server_url(), "https://example.com");
+    }
+
+    #[test]
+    fn test_debug_output_redacts_api_keys() {
+        let config = Config {
+            auth: AuthConfig {
+                enabled: true,
+                keys: vec!["sk_live_super_secret".to_string()],
+                keys_file: None,
+            },
+            ..Default::default()
+        };
+        let debug = format!("{:?}", config);
+        assert!(!debug.contains("sk_live_super_secret"), "{debug}");
+        assert!(debug.contains("1 redacted"), "{debug}");
     }
 
     #[test]

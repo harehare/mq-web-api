@@ -6,7 +6,9 @@ HTTP/REST server that exposes the [mq](https://mqlang.org/) markdown query langu
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Liveness check (status and version) |
+| `GET` | `/ready` | Readiness check; `503` once the server is shutting down |
+| `GET` | `/metrics` | Prometheus metrics (opt-in, see `METRICS_ENABLED`) |
 | `POST` | `/{query}` | Curl-friendly shortcut: query in the path, raw body (Markdown/HTML/XML/JSON/CSV/...) |
 | `GET` | `/api/v1/query` | Execute a query (query-string parameters) |
 | `POST` | `/api/v1/query` | Execute a query (JSON body) |
@@ -123,7 +125,19 @@ Response, `items` ordered like `inputs`:
 }
 ```
 
-Returns HTTP 400 if `inputs` has more than 100 entries.
+Returns HTTP 400 if `inputs` has more than 100 entries. The whole batch shares a wall-clock budget (`BATCH_TIMEOUT_SECONDS`); documents not processed by then come back with an `error` instead of results.
+
+## Errors
+
+Every error response is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) `application/problem+json` body, including 404/405, malformed JSON bodies, `413`, `408`, `429` and `5xx`:
+
+```json
+{ "status": 400, "type": "about:blank", "title": "Invalid query parameters", "error": "Invalid input_format 'csvv', expected one of: markdown, mdx, ..." }
+```
+
+Every response carries an `X-Request-Id` header (a client-supplied one is kept), also present in the server logs. `429` and `503` responses include `Retry-After`. Unknown `input_format` / `output_format` values are rejected with `400` rather than ignored.
+
+A panic while handling a request is caught and answered with `500`; the server keeps running and the panic is logged and counted in `mq_panics_total`.
 
 ### `POST /api/v1/check`
 
@@ -191,6 +205,13 @@ All settings are controlled through environment variables.
 | `QUERY_TIMEOUT_SECONDS` | `10` | Max seconds a single query may run before it's aborted |
 | `MAX_REQUEST_BODY_SIZE` | `10485760` | Max accepted HTTP request body size, in bytes. Larger requests get `413 Payload Too Large` |
 | `REQUEST_TIMEOUT_SECONDS` | `30` | Max seconds a single HTTP request may take end-to-end (routing, auth, rate limiting, handler). Exceeding it returns `408 Request Timeout` |
+| `MAX_CONCURRENT_QUERIES` | `2 x CPU cores` | Queries evaluated at the same time. Others wait up to `QUERY_TIMEOUT_SECONDS` for a slot, then get `503` with `Retry-After` |
+| `BATCH_TIMEOUT_SECONDS` | `20` | Wall-clock budget of one `POST /api/v1/batch` request. Keep it below `REQUEST_TIMEOUT_SECONDS` |
+| `METRICS_ENABLED` | `false` | Serve Prometheus metrics at `GET /metrics` (requires the `read` scope when auth is enabled) |
+| `SHUTDOWN_DRAIN_SECONDS` | `0` | After SIGTERM/SIGINT, `/ready` answers `503` for this long before the listener closes, so a load balancer can drain the instance |
+| `SHUTDOWN_TIMEOUT_SECONDS` | `30` | Max seconds to wait for in-flight requests after the listener closed; the process exits afterwards regardless |
+
+`/health`, `/ready` and `/metrics` are exempt from rate limiting.
 
 ### Query Cache
 
@@ -216,6 +237,7 @@ cached.
 | `RATE_LIMIT_REQUESTS_PER_WINDOW` | `100` | Maximum requests per window |
 | `RATE_LIMIT_WINDOW_SIZE_SECONDS` | `3600` | Window size in seconds |
 | `RATE_LIMIT_CLEANUP_INTERVAL_SECONDS` | `3600` | Expired-entry cleanup interval |
+| `TRUSTED_PROXY_COUNT` | `1` | Number of reverse proxies in front of the server that append to `X-Forwarded-For`. The client IP is the entry that many positions from the **right** of the header (entries further left are client-controlled). `0` ignores `X-Forwarded-For`/`X-Real-IP` and uses the TCP peer address — set this when the server is exposed directly |
 
 ### Authentication
 
@@ -244,6 +266,10 @@ curl -H "Authorization: Bearer sk_live_..." \
   -H "Content-Type: application/json" \
   -d '{"query": ".h1", "input": "# Title"}'
 ```
+
+### Metrics
+
+With `METRICS_ENABLED=true`, `GET /metrics` exposes: `mq_http_requests_total{status}`, `mq_http_request_duration_seconds`, `mq_query_duration_seconds`, `mq_query_cache_total{result}`, `mq_query_rejected_total` and `mq_panics_total`.
 
 ### OpenTelemetry (requires `otel` feature)
 

@@ -1,6 +1,6 @@
 use axum::{
     extract::{Request, State},
-    http::{HeaderValue, StatusCode},
+    http::{HeaderValue, StatusCode, header::RETRY_AFTER},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -31,6 +31,7 @@ pub struct AuthContext {
 
 fn required_scope(path: &str) -> Option<Scope> {
     if path == "/health"
+        || path == "/ready"
         || path.starts_with("/docs")
         || path == "/api/v1/openapi.json"
         || path == "/openapi.json"
@@ -39,6 +40,10 @@ fn required_scope(path: &str) -> Option<Scope> {
         || path == "/api/format"
     {
         return None;
+    }
+
+    if path == "/metrics" {
+        return Some(Scope::Read);
     }
 
     if path == "/api/v1/query" || path == "/api/v1/batch" {
@@ -119,7 +124,11 @@ async fn check_key_quota(rate_limiter: &RateLimiter, record: &ApiKeyRecord) -> O
                 "Per-key rate limit exceeded for '{}': {}/{}",
                 record.name, requests, limit
             );
-            Some(key_rate_limited(requests, limit))
+            Some(key_rate_limited(
+                requests,
+                limit,
+                rate_limiter.retry_after_seconds(),
+            ))
         }
         Err(err) => {
             warn!("Rate limiter error for key '{}': {}", record.name, err);
@@ -148,13 +157,14 @@ fn forbidden(key_name: &str, required: Scope) -> Response {
         .into_response()
 }
 
-fn key_rate_limited(requests: i64, limit: i64) -> Response {
+fn key_rate_limited(requests: i64, limit: i64, retry_after: i64) -> Response {
     let mut response = ProblemDetails::new(StatusCode::TOO_MANY_REQUESTS)
         .with_title("API key rate limit exceeded")
-        .with_detail("requests", &requests.to_string())
-        .with_detail("limit", &limit.to_string())
+        .with_number("requests", requests)
+        .with_number("limit", limit)
         .into_response();
     let headers = response.headers_mut();
+    headers.insert(RETRY_AFTER, HeaderValue::from(retry_after.max(1) as u64));
     if let Ok(v) = HeaderValue::from_str(&limit.to_string()) {
         headers.insert("X-RateLimit-Key-Limit", v);
     }
@@ -172,6 +182,7 @@ mod tests {
     fn test_required_scope_public_paths() {
         for path in [
             "/health",
+            "/ready",
             "/docs",
             "/docs/",
             "/api/v1/openapi.json",
@@ -197,6 +208,7 @@ mod tests {
             "/api/v1/check",
             "/api/v1/format",
             "/api/v1/lint",
+            "/metrics",
         ] {
             assert_eq!(required_scope(path), Some(Scope::Read), "path: {}", path);
         }
