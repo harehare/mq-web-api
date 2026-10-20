@@ -325,13 +325,19 @@ pub struct LintApiResponse {
 }
 
 /// Runs `request` and returns the rendered results, aborting after `timeout`.
-pub fn query(request: ApiRequest, timeout: std::time::Duration) -> miette::Result<QueryApiResponse> {
+pub fn query(
+    request: ApiRequest,
+    timeout: std::time::Duration,
+) -> miette::Result<QueryApiResponse> {
     execute_query(request, timeout)
 }
 
 /// Runs `request.query` against every document in `request.inputs` in
 /// parallel, each with its own engine instance.
-pub fn batch_query(request: BatchApiRequest, timeout: std::time::Duration) -> miette::Result<BatchApiResponse> {
+pub fn batch_query(
+    request: BatchApiRequest,
+    timeout: std::time::Duration,
+) -> miette::Result<BatchApiResponse> {
     if request.inputs.len() > MAX_BATCH_SIZE {
         return Err(miette!(
             "Batch request exceeds maximum of {} documents (got {})",
@@ -388,7 +394,9 @@ pub fn check(request: CheckApiRequest) -> CheckApiResponse {
         .collect();
 
     if !syntax_errors.is_empty() {
-        return CheckApiResponse { errors: syntax_errors };
+        return CheckApiResponse {
+            errors: syntax_errors,
+        };
     }
 
     let mut hir = mq_hir::Hir::default();
@@ -410,7 +418,9 @@ pub fn check(request: CheckApiRequest) -> CheckApiResponse {
         })
         .collect();
 
-    CheckApiResponse { errors: type_errors }
+    CheckApiResponse {
+        errors: type_errors,
+    }
 }
 
 /// Formats mq query code using the given formatting options.
@@ -482,7 +492,8 @@ pub fn list_functions() -> FunctionsApiResponse {
 
 /// Lists all builtin mq selectors with their documentation.
 pub fn list_selectors() -> SelectorsApiResponse {
-    let mut selectors: Vec<SelectorDoc> = mq_help::BUILTIN_DOC.selectors().map(selector_doc).collect();
+    let mut selectors: Vec<SelectorDoc> =
+        mq_help::BUILTIN_DOC.selectors().map(selector_doc).collect();
     selectors.sort_by(|a, b| a.name.cmp(&b.name));
     SelectorsApiResponse { selectors }
 }
@@ -504,7 +515,9 @@ pub fn get_selector(name: &str) -> Option<SelectorDoc> {
     } else {
         format!(".{name}")
     };
-    mq_help::BUILTIN_DOC.selector(name.as_str()).map(selector_doc)
+    mq_help::BUILTIN_DOC
+        .selector(name.as_str())
+        .map(selector_doc)
 }
 
 /// Lints the given query and returns any diagnostics found.
@@ -554,7 +567,10 @@ fn type_error_kind(e: &mq_check::TypeError) -> String {
     .to_string()
 }
 
-fn execute_query(request: ApiRequest, timeout: std::time::Duration) -> miette::Result<QueryApiResponse> {
+fn execute_query(
+    request: ApiRequest,
+    timeout: std::time::Duration,
+) -> miette::Result<QueryApiResponse> {
     let sandboxed_io: mq_lang::Shared<mq_lang::SandboxedIo<mq_lang::NativeIo>> =
         mq_lang::Shared::new(mq_lang::SandboxedIo::new(mq_lang::NativeIo::default()));
     let mut engine = mq_lang::Engine::with_default_io(sandboxed_io);
@@ -575,7 +591,10 @@ fn execute_query(request: ApiRequest, timeout: std::time::Duration) -> miette::R
         }
     }
 
-    let input_format = request.input_format.clone().unwrap_or(InputFormat::Markdown);
+    let input_format = request
+        .input_format
+        .clone()
+        .unwrap_or(InputFormat::Markdown);
 
     let query = {
         let base = if request.aggregate.unwrap_or(false) {
@@ -738,7 +757,14 @@ mod tests {
             assert_eq!(doc.params, source.params);
             // top_level_entries pads a shorter param_types with "dynamic" (see zip_params).
             let expected_param_types: Vec<String> = (0..source.params.len())
-                .map(|i| source.param_types.get(i).copied().unwrap_or("dynamic").to_string())
+                .map(|i| {
+                    source
+                        .param_types
+                        .get(i)
+                        .copied()
+                        .unwrap_or("dynamic")
+                        .to_string()
+                })
                 .collect();
             assert_eq!(doc.param_types, expected_param_types);
             assert_eq!(doc.returns, source.returns);
@@ -761,19 +787,30 @@ mod tests {
                 response.functions.iter().any(|f| f.name == name),
                 "{name} missing from function listing"
             );
-            assert!(get_function(name).is_some(), "{name} missing from get_function lookup");
+            assert!(
+                get_function(name).is_some(),
+                "{name} missing from get_function lookup"
+            );
         }
     }
 
     #[test]
     fn test_list_selectors_matches_mq_lang_doc_map() {
         let response = list_selectors();
-        assert_eq!(response.selectors.len(), mq_help::BUILTIN_DOC.selectors().count());
+        assert_eq!(
+            response.selectors.len(),
+            mq_help::BUILTIN_DOC.selectors().count()
+        );
 
         for doc in &response.selectors {
             let source = mq_help::BUILTIN_DOC
                 .selector(doc.name.as_str())
-                .unwrap_or_else(|| panic!("{} present in API response but not in BUILTIN_DOC", doc.name));
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} present in API response but not in BUILTIN_DOC",
+                        doc.name
+                    )
+                });
             assert_eq!(doc.description, source.description);
             assert_eq!(doc.params, source.params);
             assert_eq!(doc.param_types, source.param_types);
@@ -936,7 +973,9 @@ mod tests {
     #[test]
     fn test_modules_does_not_read_local_filesystem() {
         let module_name = "mq_web_api_test_local_fs_module_should_not_be_readable";
-        let module_path = std::env::current_dir().unwrap().join(format!("{module_name}.mq"));
+        let module_path = std::env::current_dir()
+            .unwrap()
+            .join(format!("{module_name}.mq"));
         std::fs::write(&module_path, "def leaked(): 1;").expect("failed to write test module");
 
         let req = ApiRequest {
@@ -1166,7 +1205,11 @@ mod tests {
             query: "let x = .h1 | .text".to_string(),
         };
         let resp = lint(req);
-        assert!(resp.diagnostics.iter().any(|d| d.rule_id == "unused_variable"));
+        assert!(
+            resp.diagnostics
+                .iter()
+                .any(|d| d.rule_id == "unused_variable")
+        );
     }
 
     #[test]

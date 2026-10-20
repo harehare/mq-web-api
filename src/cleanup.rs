@@ -31,7 +31,10 @@ impl CleanupService {
         let interval_duration = self.cleanup_interval;
 
         let handle = tokio::spawn(async move {
-            info!("Starting cleanup service with interval: {:?}", interval_duration);
+            info!(
+                "Starting cleanup service with interval: {:?}",
+                interval_duration
+            );
 
             let mut cleanup_interval = interval(interval_duration);
 
@@ -69,7 +72,10 @@ impl CleanupService {
 
     /// Returns `true` while the background task is running.
     pub fn is_running(&self) -> bool {
-        self.handle.as_ref().map(|h| !h.is_finished()).unwrap_or(false)
+        self.handle
+            .as_ref()
+            .map(|h| !h.is_finished())
+            .unwrap_or(false)
     }
 }
 
@@ -123,7 +129,10 @@ mod tests {
 
         sleep(Duration::from_secs(2)).await;
 
-        let usage = rate_limiter.get_current_usage("expired_user").await.unwrap();
+        let usage = rate_limiter
+            .get_current_usage("expired_user")
+            .await
+            .unwrap();
         assert_eq!(usage, None, "Expired records should have been cleaned up");
 
         cleanup_service.stop();

@@ -5,7 +5,8 @@ use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[cfg(feature = "otel")]
-static TRACER_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = std::sync::OnceLock::new();
+static TRACER_PROVIDER: std::sync::OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> =
+    std::sync::OnceLock::new();
 
 use crate::{
     auth::ApiKeyStore,
@@ -21,7 +22,8 @@ use crate::{
 /// an OTLP span exporter is attached so traces are forwarded to the
 /// configured OpenTelemetry collector.
 pub fn init_tracing(config: &Config) {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| config.log_level.clone().into());
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| config.log_level.clone().into());
 
     #[cfg(feature = "otel")]
     if let Some(ref endpoint) = config.otel_endpoint {
@@ -37,7 +39,10 @@ pub fn init_tracing(config: &Config) {
             .expect("Failed to build OTLP span exporter");
 
         let resource = Resource::builder()
-            .with_attribute(KeyValue::new("service.name", config.otel_service_name.clone()))
+            .with_attribute(KeyValue::new(
+                "service.name",
+                config.otel_service_name.clone(),
+            ))
             .build();
 
         let provider = SdkTracerProvider::builder()
@@ -89,7 +94,9 @@ pub fn init_tracing(config: &Config) {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
 
     #[cfg(unix)]
@@ -123,13 +130,18 @@ pub async fn start_server(config: Config) -> Result<(), Box<dyn std::error::Erro
         None => info!("API key authentication disabled"),
     }
 
-    let app =
-        create_router(&config, rate_limiter.clone(), api_key_store).layer(TraceLayer::new_for_http().on_response(
+    let app = create_router(&config, rate_limiter.clone(), api_key_store).layer(
+        TraceLayer::new_for_http().on_response(
             |response: &axum::response::Response, latency: Duration, _span: &tracing::Span| {
                 let ms = latency.as_secs_f64() * 1000.0;
-                info!("response latency: {:.2}ms, status: {}", ms, response.status());
+                info!(
+                    "response latency: {:.2}ms, status: {}",
+                    ms,
+                    response.status()
+                );
             },
-        ));
+        ),
+    );
 
     let bind_address = config.bind_address();
     let listener = tokio::net::TcpListener::bind(&bind_address)
@@ -150,17 +162,31 @@ pub async fn start_server(config: Config) -> Result<(), Box<dyn std::error::Erro
     info!("  RATE_LIMIT_REQUESTS_PER_WINDOW: Requests per window (default: 100)");
     info!("  RATE_LIMIT_WINDOW_SIZE_SECONDS: Window size in seconds (default: 3600)");
     info!("  RATE_LIMIT_CLEANUP_INTERVAL_SECONDS: Cleanup interval in seconds (default: 3600)");
-    info!("  QUERY_TIMEOUT_SECONDS: Max seconds a single query may run before it's aborted (default: 10)");
-    info!("  MAX_REQUEST_BODY_SIZE: Max accepted HTTP request body size in bytes (default: 10485760)");
-    info!("  REQUEST_TIMEOUT_SECONDS: Max seconds a single HTTP request may take end-to-end (default: 30)");
+    info!(
+        "  QUERY_TIMEOUT_SECONDS: Max seconds a single query may run before it's aborted (default: 10)"
+    );
+    info!(
+        "  MAX_REQUEST_BODY_SIZE: Max accepted HTTP request body size in bytes (default: 10485760)"
+    );
+    info!(
+        "  REQUEST_TIMEOUT_SECONDS: Max seconds a single HTTP request may take end-to-end (default: 30)"
+    );
     info!("  QUERY_CACHE_ENABLED: Cache repeated query/input combinations (default: true)");
     info!("  QUERY_CACHE_TTL_SECONDS: How long a cached result stays fresh (default: 30)");
     info!("  QUERY_CACHE_MAX_ENTRIES: Max number of cached query results (default: 1000)");
-    info!("  QUERY_CACHE_MAX_ENTRY_BYTES: Max bytes retained by one cache entry (default: 1048576)");
-    info!("  QUERY_CACHE_MAX_TOTAL_BYTES: Max bytes retained by all cache entries (default: 33554432)");
+    info!(
+        "  QUERY_CACHE_MAX_ENTRY_BYTES: Max bytes retained by one cache entry (default: 1048576)"
+    );
+    info!(
+        "  QUERY_CACHE_MAX_TOTAL_BYTES: Max bytes retained by all cache entries (default: 33554432)"
+    );
     info!("  AUTH_ENABLED: Require an API key on protected endpoints (default: false)");
-    info!("  API_KEYS: Comma-separated API keys (all get read+query scope, no rate limit override)");
-    info!("  API_KEYS_FILE: Path to a JSON file of {{key, name, scopes, rate_limit_per_window}} entries");
+    info!(
+        "  API_KEYS: Comma-separated API keys (all get read+query scope, no rate limit override)"
+    );
+    info!(
+        "  API_KEYS_FILE: Path to a JSON file of {{key, name, scopes, rate_limit_per_window}} entries"
+    );
 
     // Start cleanup service
     let mut cleanup_service = CleanupService::new(
@@ -169,10 +195,13 @@ pub async fn start_server(config: Config) -> Result<(), Box<dyn std::error::Erro
     );
     cleanup_service.start();
 
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("Failed to start server");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .expect("Failed to start server");
 
     info!("Shutting down mq-web-api server");
 

@@ -21,9 +21,9 @@ use crate::{
     auth::ApiKeyStore,
     config::Config,
     handlers::{
-        ApiDoc, AppState, get_function_api, get_functions_api, get_query_api, get_selector_api, get_selectors_api,
-        health_check, post_batch_api, post_check_api, post_format_api, post_lint_api, post_query_api,
-        post_shorthand_query_api,
+        ApiDoc, AppState, get_function_api, get_functions_api, get_query_api, get_selector_api,
+        get_selectors_api, health_check, post_batch_api, post_check_api, post_format_api,
+        post_lint_api, post_query_api, post_shorthand_query_api,
     },
     middleware::{AuthState, auth_middleware, rate_limit_middleware},
     query_cache::QueryCache,
@@ -47,7 +47,11 @@ pub fn create_router(
             .allow_headers(Any)
             .allow_origin(Any)
     } else {
-        let origins: Result<Vec<_>, _> = config.cors_origins.iter().map(|origin| origin.parse()).collect();
+        let origins: Result<Vec<_>, _> = config
+            .cors_origins
+            .iter()
+            .map(|origin| origin.parse())
+            .collect();
 
         match origins {
             Ok(origins) => CorsLayer::new()
@@ -85,8 +89,14 @@ pub fn create_router(
             get(|| async { Redirect::permanent("/api/v1/query") })
                 .post(|| async { Redirect::permanent("/api/v1/query") }),
         )
-        .route("/api/check", post(|| async { Redirect::permanent("/api/v1/check") }))
-        .route("/api/format", post(|| async { Redirect::permanent("/api/v1/format") }))
+        .route(
+            "/api/check",
+            post(|| async { Redirect::permanent("/api/v1/check") }),
+        )
+        .route(
+            "/api/format",
+            post(|| async { Redirect::permanent("/api/v1/format") }),
+        )
         .route(
             "/openapi.json",
             get(|| async { Redirect::permanent("/api/v1/openapi.json") }),
@@ -119,7 +129,10 @@ pub fn create_router(
     };
 
     router
-        .layer(middleware::from_fn_with_state(rate_limiter, rate_limit_middleware))
+        .layer(middleware::from_fn_with_state(
+            rate_limiter,
+            rate_limit_middleware,
+        ))
         .with_state(state)
 }
 

@@ -153,7 +153,8 @@ mod tests {
 
     #[test]
     fn test_raw_keys_get_both_scopes_and_no_override() {
-        let store = ApiKeyStore::from_raw_keys(vec!["secret-1".to_string(), "secret-2".to_string()]);
+        let store =
+            ApiKeyStore::from_raw_keys(vec!["secret-1".to_string(), "secret-2".to_string()]);
         assert_eq!(store.len(), 2);
 
         let record = store.authenticate("secret-1").unwrap();

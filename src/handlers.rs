@@ -16,10 +16,10 @@ use utoipa::{
 
 use crate::{
     api::{
-        ApiRequest, BatchApiRequest, BatchApiResponse, BatchItemResult, CheckApiRequest, CheckApiResponse, CheckError,
-        ExampleDoc, FormatApiRequest, FormatApiResponse, FunctionDoc, FunctionsApiResponse, InputFormat,
-        LintApiRequest, LintApiResponse, LintDiagnostic, OutputFormat, QueryApiResponse, SelectorDoc,
-        SelectorsApiResponse,
+        ApiRequest, BatchApiRequest, BatchApiResponse, BatchItemResult, CheckApiRequest,
+        CheckApiResponse, CheckError, ExampleDoc, FormatApiRequest, FormatApiResponse, FunctionDoc,
+        FunctionsApiResponse, InputFormat, LintApiRequest, LintApiResponse, LintDiagnostic,
+        OutputFormat, QueryApiResponse, SelectorDoc, SelectorsApiResponse,
     },
     problem::ProblemDetails,
     query_cache::{self, QueryCache},
@@ -215,12 +215,14 @@ pub async fn get_query_api(
         aggregate: None,
     };
 
-    match execute_query_with_cache(&state, request).await.map_err(|e| {
-        error!("Query task panicked: {}", e);
-        ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
-            .with_title("Internal error")
-            .with_detail("error", &e.to_string())
-    })? {
+    match execute_query_with_cache(&state, request)
+        .await
+        .map_err(|e| {
+            error!("Query task panicked: {}", e);
+            ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
+                .with_title("Internal error")
+                .with_detail("error", &e.to_string())
+        })? {
         Ok(response) => {
             info!(
                 "Successfully processed query: {}, results count: {}",
@@ -254,15 +256,20 @@ pub async fn post_query_api(
     Json(request): Json<ApiRequest>,
 ) -> Result<Json<QueryApiResponse>, ProblemDetails> {
     debug!("POST /query called with query: {}", request.query);
-    debug!("Processing request with input_format: {:?}", request.input_format);
+    debug!(
+        "Processing request with input_format: {:?}",
+        request.input_format
+    );
 
     let query_str = request.query.clone();
-    match execute_query_with_cache(&state, request).await.map_err(|e| {
-        error!("Query task panicked: {}", e);
-        ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
-            .with_title("Internal error")
-            .with_detail("error", &e.to_string())
-    })? {
+    match execute_query_with_cache(&state, request)
+        .await
+        .map_err(|e| {
+            error!("Query task panicked: {}", e);
+            ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
+                .with_title("Internal error")
+                .with_detail("error", &e.to_string())
+        })? {
         Ok(response) => {
             info!(
                 "Successfully processed query: {}, results count: {}",
@@ -338,7 +345,11 @@ pub async fn post_batch_api(
 /// Markdown/text without an explicit `?input_format=`.
 fn sniff_input_format(body: &str) -> Option<InputFormat> {
     let trimmed = body.trim_start_matches('\u{feff}').trim_start();
-    let lower_prefix: String = trimmed.chars().take(14).collect::<String>().to_ascii_lowercase();
+    let lower_prefix: String = trimmed
+        .chars()
+        .take(14)
+        .collect::<String>()
+        .to_ascii_lowercase();
 
     if lower_prefix.starts_with("<!doctype html") || lower_prefix.starts_with("<html") {
         return Some(InputFormat::Html);
@@ -397,12 +408,14 @@ pub async fn post_shorthand_query_api(
         aggregate: None,
     };
 
-    match execute_query_with_cache(&state, request).await.map_err(|e| {
-        error!("Shorthand query task panicked: {}", e);
-        ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
-            .with_title("Internal error")
-            .with_detail("error", &e.to_string())
-    })? {
+    match execute_query_with_cache(&state, request)
+        .await
+        .map_err(|e| {
+            error!("Shorthand query task panicked: {}", e);
+            ProblemDetails::new(StatusCode::INTERNAL_SERVER_ERROR)
+                .with_title("Internal error")
+                .with_detail("error", &e.to_string())
+        })? {
         Ok(response) => {
             info!(
                 "Successfully processed shorthand query: {}, results count: {}",
@@ -578,7 +591,9 @@ pub async fn post_lint_api(
         .await
         .unwrap_or_else(|e| {
             error!("Lint task panicked: {}", e);
-            crate::api::LintApiResponse { diagnostics: vec![] }
+            crate::api::LintApiResponse {
+                diagnostics: vec![],
+            }
         });
     info!(
         "Lint for query '{}': {} diagnostics found",

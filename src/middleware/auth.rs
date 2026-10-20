@@ -63,7 +63,11 @@ fn extract_bearer(request: &Request) -> Option<&str> {
 }
 
 /// Rejects requests lacking a valid API key or the scope the route requires.
-pub async fn auth_middleware(State(auth): State<AuthState>, mut request: Request, next: Next) -> Response {
+pub async fn auth_middleware(
+    State(auth): State<AuthState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
     let Some(required) = required_scope(request.uri().path()) else {
         return next.run(request).await;
     };
@@ -73,7 +77,10 @@ pub async fn auth_middleware(State(auth): State<AuthState>, mut request: Request
     };
 
     let Some(record) = auth.store.authenticate(presented) else {
-        warn!("Auth failed: unknown API key presented for {}", request.uri().path());
+        warn!(
+            "Auth failed: unknown API key presented for {}",
+            request.uri().path()
+        );
         return unauthorized("Invalid API key");
     };
 
@@ -126,9 +133,10 @@ fn unauthorized(detail: &str) -> Response {
         .with_title("Unauthorized")
         .with_detail("error", detail)
         .into_response();
-    response
-        .headers_mut()
-        .insert(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+    response.headers_mut().insert(
+        axum::http::header::WWW_AUTHENTICATE,
+        HeaderValue::from_static("Bearer"),
+    );
     response
 }
 
@@ -162,7 +170,13 @@ mod tests {
 
     #[test]
     fn test_required_scope_public_paths() {
-        for path in ["/health", "/docs", "/docs/", "/api/v1/openapi.json", "/openapi.json"] {
+        for path in [
+            "/health",
+            "/docs",
+            "/docs/",
+            "/api/v1/openapi.json",
+            "/openapi.json",
+        ] {
             assert_eq!(required_scope(path), None, "path: {}", path);
         }
     }
