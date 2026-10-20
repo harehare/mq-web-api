@@ -17,7 +17,15 @@ use tokio::sync::Mutex;
 
 use crate::api::{ApiRequest, InputFormat, OutputFormat, QueryApiResponse};
 
-const NONDETERMINISTIC_BUILTINS: &[&str] = &["now", "uuid", "uuid_v4", "uuid_v7", "rand", "rand_int", "random_string"];
+const NONDETERMINISTIC_BUILTINS: &[&str] = &[
+    "now",
+    "uuid",
+    "uuid_v4",
+    "uuid_v7",
+    "rand",
+    "rand_int",
+    "random_string",
+];
 
 /// Settings for [`QueryCache`].
 #[derive(Debug, Clone)]

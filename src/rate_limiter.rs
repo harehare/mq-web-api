@@ -81,11 +81,13 @@ impl RateLimiter {
         let expires_at = window_start + self.config.window_size_seconds;
 
         let mut store = self.store.lock().await;
-        let entry = store.entry(identifier.to_string()).or_insert_with(|| RateLimitEntry {
-            window_start,
-            request_count: 0,
-            expires_at,
-        });
+        let entry = store
+            .entry(identifier.to_string())
+            .or_insert_with(|| RateLimitEntry {
+                window_start,
+                request_count: 0,
+                expires_at,
+            });
 
         if entry.window_start != window_start {
             entry.window_start = window_start;
@@ -102,7 +104,10 @@ impl RateLimiter {
         );
 
         if count > limit {
-            return Err(RateLimitError::LimitExceeded { requests: count, limit });
+            return Err(RateLimitError::LimitExceeded {
+                requests: count,
+                limit,
+            });
         }
 
         Ok(())
@@ -278,10 +283,15 @@ mod tests {
                 .unwrap();
         }
 
-        let result = limiter.check_and_increment_with_limit(identifier, Some(3)).await;
+        let result = limiter
+            .check_and_increment_with_limit(identifier, Some(3))
+            .await;
         assert!(matches!(
             result,
-            Err(RateLimitError::LimitExceeded { requests: 4, limit: 3 })
+            Err(RateLimitError::LimitExceeded {
+                requests: 4,
+                limit: 3
+            })
         ));
     }
 

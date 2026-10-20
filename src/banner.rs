@@ -7,7 +7,10 @@ use colored::{ColoredString, Colorize};
 use crate::config::Config;
 
 fn is_truecolor_supported() -> bool {
-    matches!(std::env::var("COLORTERM").as_deref(), Ok("truecolor") | Ok("24bit"))
+    matches!(
+        std::env::var("COLORTERM").as_deref(),
+        Ok("truecolor") | Ok("24bit")
+    )
 }
 
 fn logo(s: &str) -> ColoredString {
@@ -51,8 +54,15 @@ pub fn print_banner(config: &Config) {
     };
 
     println!();
-    println!("  {} {}", logo("mq").bold(), muted(&format!("web-api v{version}")));
-    println!("  {}", muted("Query. Filter. Transform Markdown — over HTTP."));
+    println!(
+        "  {} {}",
+        logo("mq").bold(),
+        muted(&format!("web-api v{version}"))
+    );
+    println!(
+        "  {}",
+        muted("Query. Filter. Transform Markdown — over HTTP.")
+    );
     println!();
     println!("  {}{}", muted(&label("Local:")), server_url.bright_green());
     println!(

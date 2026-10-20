@@ -39,7 +39,10 @@ pub async fn rate_limit_middleware(
             response
         }
         Err(err) => {
-            warn!("Rate limiter error for identifier '{}': {}", identifier, err);
+            warn!(
+                "Rate limiter error for identifier '{}': {}",
+                identifier, err
+            );
 
             // On database errors, allow the request to proceed
             // This ensures the service remains available even if rate limiting fails
@@ -104,7 +107,8 @@ fn add_rate_limit_headers(response: &mut Response, current_usage: i64, rate_limi
     }
 
     // Add limit
-    if let Ok(limit_header) = HeaderValue::from_str(&rate_limiter.requests_per_window().to_string()) {
+    if let Ok(limit_header) = HeaderValue::from_str(&rate_limiter.requests_per_window().to_string())
+    {
         headers.insert("X-RateLimit-Limit", limit_header);
     }
 
@@ -115,7 +119,9 @@ fn add_rate_limit_headers(response: &mut Response, current_usage: i64, rate_limi
     }
 
     // Add window size
-    if let Ok(window_header) = HeaderValue::from_str(&rate_limiter.window_size_seconds().to_string()) {
+    if let Ok(window_header) =
+        HeaderValue::from_str(&rate_limiter.window_size_seconds().to_string())
+    {
         headers.insert("X-RateLimit-Window", window_header);
     }
 }

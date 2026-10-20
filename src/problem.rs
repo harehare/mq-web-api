@@ -39,19 +39,22 @@ impl ProblemDetails {
 
     /// Sets the `type` member.
     pub fn with_type(mut self, value: &str) -> Self {
-        self.details.insert(Cow::Borrowed("type"), value.to_string());
+        self.details
+            .insert(Cow::Borrowed("type"), value.to_string());
         self
     }
 
     /// Adds an extension member.
     pub fn with_detail(mut self, key: &str, value: &str) -> Self {
-        self.details.insert(Cow::Owned(key.to_string()), value.to_string());
+        self.details
+            .insert(Cow::Owned(key.to_string()), value.to_string());
         self
     }
 
     /// Sets the `title` member.
     pub fn with_title(mut self, value: &str) -> Self {
-        self.details.insert(Cow::Borrowed("title"), value.to_string());
+        self.details
+            .insert(Cow::Borrowed("title"), value.to_string());
         self
     }
 }
