@@ -49,7 +49,7 @@ utoipa = {version = "6.0", features = ["preserve_order"]}
 utoipa-swagger-ui = {version = "10", features = ["axum", "vendored"]}
 
 [dev-dependencies]
-rstest = "0.27.0"
+rstest = "0.28.0"
 
 [[bin]]
 name = "mq-web-api"
