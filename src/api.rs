@@ -195,10 +195,10 @@ pub struct CheckError {
     pub end_line: Option<u32>,
     /// End column of the error.
     pub end_column: Option<u32>,
-    /// Error kind: `"syntax_error"`, `"type_mismatch"`, `"undefined_symbol"`,
-    /// `"unification_error"`, `"wrong_arity"`, `"undefined_field"`,
+    /// Error kind: `"syntax_error"`, `"type_mismatch"`, `"unification_error"`,
+    /// `"wrong_arity"`, `"undefined_field"`, `"undefined_attribute"`,
     /// `"heterogeneous_array"`, `"nullable_propagation"`, `"unreachable_code"`,
-    /// `"occurs_check"`, or `"internal_error"`.
+    /// or `"non_exhaustive_match"`.
     pub kind: String,
 }
 
@@ -588,14 +588,10 @@ fn type_error_kind(e: &mq_check::TypeError) -> String {
     match e {
         mq_check::TypeError::Mismatch { .. } => "type_mismatch",
         mq_check::TypeError::UnificationError { .. } => "unification_error",
-        mq_check::TypeError::OccursCheck { .. } => "occurs_check",
-        mq_check::TypeError::UndefinedSymbol { .. } => "undefined_symbol",
         mq_check::TypeError::WrongArity { .. } => "wrong_arity",
         mq_check::TypeError::UndefinedField { .. } => "undefined_field",
         mq_check::TypeError::UndefinedAttribute { .. } => "undefined_attribute",
         mq_check::TypeError::HeterogeneousArray { .. } => "heterogeneous_array",
-        mq_check::TypeError::TypeVarNotFound(_) => "type_var_not_found",
-        mq_check::TypeError::Internal(_) => "internal_error",
         mq_check::TypeError::NullablePropagation { .. } => "nullable_propagation",
         mq_check::TypeError::UnreachableCode { .. } => "unreachable_code",
         mq_check::TypeError::NonExhaustiveMatch { .. } => "non_exhaustive_match",
