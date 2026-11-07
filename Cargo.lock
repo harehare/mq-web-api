@@ -279,6 +279,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmov"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
+
+[[package]]
 name = "colored"
 version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -425,6 +431,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctutils"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "261af4dc7a06ea8a527a8717d8cbba3417530d6ea14e1edb3de6b67806be474f"
+dependencies = [
+ "cmov",
+]
+
+[[package]]
 name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -454,6 +469,7 @@ dependencies = [
  "block-buffer",
  "const-oid",
  "crypto-common",
+ "ctutils",
 ]
 
 [[package]]
@@ -787,6 +803,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
 dependencies = [
  "hashbrown 0.17.1",
+]
+
+[[package]]
+name = "hmac"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
+dependencies = [
+ "digest",
 ]
 
 [[package]]
@@ -1282,9 +1307,9 @@ dependencies = [
 
 [[package]]
 name = "mq-check"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "308d592b348ce6eed4463517c0ef5edb13505085aefb7ecc734437d9d8a0b35d"
+checksum = "fdca033b3bb486c6e03cf0c6a1507911e01931ffcfe8feee42bb3e9c003cb3e8"
 dependencies = [
  "miette",
  "mq-hir",
@@ -1298,18 +1323,18 @@ dependencies = [
 
 [[package]]
 name = "mq-formatter"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c99a4fd54a4747085dad58c3baf9e1e335e0b657c8123dfb25b751aeaed85a7"
+checksum = "3740166097bfda3f6278648816c3c3c03f831dd81f17ca56c4e2bfb6c9bdf875"
 dependencies = [
  "mq-lang",
 ]
 
 [[package]]
 name = "mq-help"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e4c16fe1bfaca3c3034e8a8bc061ea5910fe412e50be56ae7793a1d66f95cee"
+checksum = "135969d73b71931c19e414b3223f28b902da233033cb0d3da2cb09794bde065a"
 dependencies = [
  "colored",
  "mq-lang",
@@ -1318,9 +1343,9 @@ dependencies = [
 
 [[package]]
 name = "mq-hir"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ad5bf6567e7a1c0dbcce10f9b91512d9dd4409bf7cb5c91bb3b7972b3339b29"
+checksum = "5f9f736c2ba6f7c0c692d8bc2ec61331660705d3eb801ca38dfcaac7e5cf274f"
 dependencies = [
  "itertools 0.15.0",
  "mq-help",
@@ -1334,9 +1359,9 @@ dependencies = [
 
 [[package]]
 name = "mq-lang"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac65222018da6bc4d2a7bc38a75dc47cd0754111d6e7cc07c933ad4ed93cbd28"
+checksum = "b50f2eae6a344fdfc3253f36b7edfb53d634f36c69a6cb55f0b18801e5600d70"
 dependencies = [
  "ammonia",
  "base64 0.23.1",
@@ -1348,9 +1373,10 @@ dependencies = [
  "encoding_rs",
  "getrandom 0.4.3",
  "glob",
+ "hashbrown 0.17.1",
+ "hmac",
  "html-escape",
  "ignore",
- "indexmap",
  "itertools 0.15.0",
  "md5",
  "memchr",
@@ -1366,6 +1392,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "similar",
+ "siphasher",
  "smallvec",
  "smol_str",
  "string-interner",
@@ -1385,9 +1412,9 @@ dependencies = [
 
 [[package]]
 name = "mq-lint"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05d3bf16575510f86863c2f4ad176ee9eefc01d42a0c90201fe7234910172ee2"
+checksum = "47eed29274c715b49254f6f66810d1bc48e48bfe9ee46423b806015c7b42a311"
 dependencies = [
  "mq-hir",
  "mq-lang",
@@ -1396,9 +1423,9 @@ dependencies = [
 
 [[package]]
 name = "mq-macros"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "729a09c4197bb363c9ce8bb54e127cc7cdb38d108c1763b39a78e3c7d63443ca"
+checksum = "b3efb029c6b7f53c87777ec95c20afb797a51e7b500e22e4fb7a060e40a4a429"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1407,9 +1434,9 @@ dependencies = [
 
 [[package]]
 name = "mq-markdown"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77a34c2913877119fa13c868329146a3b979d146718ce142b8ed079127cf579e"
+checksum = "65339fd312f65e5c636d54851a3f6997055e43950cc46a67b4bdd847b4352352"
 dependencies = [
  "ego-tree",
  "itertools 0.15.0",
@@ -1427,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "mq-web-api"
-version = "0.9.4"
+version = "0.10.1"
 dependencies = [
  "axum",
  "colored",

@@ -217,7 +217,7 @@ pub fn cache_key(request: &ApiRequest) -> Option<String> {
 
 fn calls_nondeterministic_builtin(query: &str) -> bool {
     let mut hir = mq_hir::Hir::default();
-    let (source_id, _) = hir.add_code(None, query);
+    let (source_id, _, _) = hir.add_code(None, query);
 
     hir.find_symbols_in_source(source_id).iter().any(|symbol| {
         matches!(symbol.kind, mq_hir::SymbolKind::Call)

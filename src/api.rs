@@ -559,7 +559,7 @@ pub fn get_selector(name: &str) -> Option<SelectorDoc> {
 /// Lints the given query and returns any diagnostics found.
 pub fn lint(request: LintApiRequest) -> LintApiResponse {
     let mut hir = mq_hir::Hir::default();
-    let (source_id, _) = hir.add_code(None, &request.query);
+    let (source_id, _, _) = hir.add_code(None, &request.query);
 
     let config = mq_lint::LintConfig::default();
     let ctx = mq_lint::LintContext::new(&hir, source_id, &config);

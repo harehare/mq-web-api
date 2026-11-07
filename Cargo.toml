@@ -9,7 +9,7 @@ license = "MIT"
 name = "mq-web-api"
 readme = "README.md"
 repository = "https://github.com/harehare/mq-web-api"
-version = "0.9.4"
+version = "0.10.1"
 
 [features]
 default = ["use_mimalloc"]
@@ -28,13 +28,13 @@ opentelemetry = {version = "0.33", optional = true}
 opentelemetry-otlp = {version = "0.33", features = ["grpc-tonic"], optional = true}
 opentelemetry_sdk = {version = "0.33", features = ["rt-tokio"], optional = true}
 tracing-opentelemetry = {version = "0.34", optional = true}
-mq-check = "0.10.0"
-mq-formatter = {version = "0.10.0", default-features = false}
-mq-help = {version = "0.10.0", default-features = false, features = ["catalog"]}
-mq-hir = "0.10.0"
-mq-lang = {version = "0.10.0", features = ["cst"]}
-mq-lint = "0.10.0"
-mq-markdown = {version = "0.10.0", features = ["json"]}
+mq-check = "0.10.1"
+mq-formatter = {version = "0.10.1", default-features = false}
+mq-help = {version = "0.10.1", default-features = false, features = ["catalog"]}
+mq-hir = "0.10.1"
+mq-lang = {version = "0.10.1", features = ["cst"]}
+mq-lint = "0.10.1"
+mq-markdown = {version = "0.10.1", features = ["json"]}
 rayon = "1.11.0"
 serde = {version = "1.0", features = ["derive"]}
 serde_json = "1.0"
