@@ -2,3 +2,5 @@
 /pkg
 .wrangler
 .DS_Store
+.vercel
+.env*
